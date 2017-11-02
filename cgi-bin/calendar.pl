@@ -1,10 +1,18 @@
 #!/usr/bin/env perl
+#
+# Kalendarz CGI
+# Autor: Maciej Bielecki
+#
+# Wymagania (moduły z CPAN):
+# - CGI
+# - DBI
+# - DBD::SQLite
 
 use strict;
 use utf8;
 use DBI;
 use CGI;
-use CGI::Carp qw(fatalsToBrowser);
+use CGI::Carp;
 use MIME::Base64;
 use POSIX qw(strftime mktime);
 

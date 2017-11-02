@@ -1,0 +1,33 @@
+== Kalendarz CGI
+Autor: Maciej Bielecki
+
+=== Uruchomienie
+
+Należy zainicjalizować bazę danych w następujący sposób:
+
+```
+cat schema.sql data.sql | sqlite3 db.sqlite3
+```
+
+Należy ustawić serwer WWW tak, aby wykonywał `calendar.pl` jako skrypt CGI.
+
+=== Użycie
+
+Logowanie do systemu jest za pomocą HTTP Basic Auth.
+
+Przykładowe dane logowania:
+- Konto szefa - login: szef hasło: hunter2
+- Konto pracownika - login: jan hasło: 123
+
+Kalendarz składa się ze zbioru _wpisów_. Wpisy mają następujące typy:
+- Godziny pracy - pracownik jest wtedy w pracy, chyba że wpis nakłada się z Urlopem.
+- Zajęty - pracownik jest wtedy w pracy, ale jest zajęty.
+- Urlop
+- Spotkanie
+
+Widok pracownika pozwala tylko na zarządzanie własnym kalendarzem.
+
+Widok szefa pozwala dodatkowo na:
+- podgląd stanu każdego z użytkowników
+- dodawanie spotkań dotyczących całej grupy
+- wyszukiwanie wolnych terminów spotkań.
