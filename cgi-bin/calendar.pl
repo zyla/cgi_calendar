@@ -87,6 +87,11 @@ sub page_view_calendar {
 		print "<div>";
 		print $q->p($row->{date_from} . " &ndash; " . $row->{date_to});
 		print $q->p($entry_type_descriptions{$row->{entry_type}});
+		print $q->start_form(-method => "POST", -action => "?page=delete_entry");
+		print q(<input type="hidden" name="page" value="delete_entry">);
+		print $q->hidden('entry_id', $row->{entry_id});
+		print $q->submit(-value => "Usuń");
+		print $q->end_form();
 		print "</div>";
 	}
 
@@ -176,11 +181,19 @@ sub page_add_entry {
 	print $q->end_form();
 }
 
+sub page_delete_entry {
+	my $entry_id = $q->param('entry_id');
+	my $st = $dbh->prepare("DELETE FROM calendar_entries WHERE entry_id = ? AND (? = 'boss' OR user_login = ?)");
+	$st->execute($entry_id, $user{user_type}, $user{login});
+	print $q->redirect("?page=view");
+}
+
 my $page = $q->param("page");
 
 my %pages = (
 	"view" => sub { page_view_calendar(); },
-	"add_entry" => sub { page_add_entry(); }
+	"add_entry" => sub { page_add_entry(); },
+	"delete_entry" => sub { page_delete_entry(); },
 );
 
 $pages{$page}();
