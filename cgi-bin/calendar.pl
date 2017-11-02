@@ -19,13 +19,6 @@ my $q = CGI->new;
 
 my %user;
 
-# 0. Basic auth
-# 1. Display user's calendar
-# 2. Add entry
-# 3. Delete entry
-# 4. Boss dashboard - status of each employee
-# 5. Reserve meeting - given duration, list possible dates
-
 my %entry_type_descriptions = (
   'work' => "Godziny pracy",
   'busy' => "Zajętość",
@@ -61,6 +54,14 @@ sub is_boss {
 	return $user{user_type} eq 'boss';
 }
 
+sub get_user_logins {
+	my $st = $dbh->prepare("SELECT login FROM users");
+	$st->execute();
+	my $results = $st->fetchall_arrayref({});
+	my @array = map { $_->{login} } @$results;
+	return \@array;
+}
+
 # can_delete_entry(entry : hashref) - whether the current user can delete an entry
 # 
 # The rules are as follows:
@@ -71,6 +72,32 @@ sub can_delete_entry {
 	return is_boss || $entry->{user_login} eq $user{login};
 }
 
+sub user_status {
+	my $login = shift @_;
+	my $st = $dbh->prepare(q(
+		SELECT * FROM calendar_entries
+		WHERE user_login = ? OR user_login IS NULL
+	      AND date(date_from) <= date('now')
+	      AND date(date_to) >= date('now')
+		ORDER BY date_from ASC
+		));
+	$st->execute($login);
+	my $arrayref = $st->fetchall_arrayref({});
+	my @types = map { $_->{entry_type} } @$arrayref;
+
+	if(grep { $_ eq 'vacation' } @types) {
+		return "Na urlopie";
+	} elsif (grep { $_ eq 'busy' } @types) {
+		return "Zajęty";
+	} elsif (grep { $_ eq 'meeting' } @types) {
+		return "Na spotkaniu";
+	} elsif (grep { $_ eq 'work' } @types) {
+		return "W pracy";
+	} else {
+		return "Wolne";
+	}
+}
+
 sub page_view_calendar {
 	print $q->header("text/html; charset=utf-8");
 
@@ -79,6 +106,7 @@ sub page_view_calendar {
 	my $st = $dbh->prepare(q(
 		SELECT * FROM calendar_entries
 		WHERE user_login = ? OR user_login IS NULL
+		  AND date_to >= date('now')
 		ORDER BY date_from ASC
 		));
 	$st->execute($user{login});
@@ -103,6 +131,17 @@ sub page_view_calendar {
 	print q(<p><a href="?page=add_entry">Dodaj nowy wpis</a></p>);
 
 	if(is_boss) {
+		print $q->h2("Stan pracownikow");
+
+		print "<ul>";
+		my $logins = get_user_logins;
+		foreach(@$logins) {
+			my $status = user_status($_);
+			print qq(<li>$_: $status);
+		};
+		print "</ul>";
+
+		print "<hr/>";
 		print q(<p><a href="?page=find_meeting_time">Znajdź termin spotkania</a></p>);
 	}
 }
@@ -216,14 +255,6 @@ sub page_delete_entry {
 	}
 }
 
-sub get_user_logins {
-	my $st = $dbh->prepare("SELECT login FROM users");
-	$st->execute();
-	my $results = $st->fetchall_arrayref({});
-	my @array = map { $_->{login} } @$results;
-	return \@array;
-}
-
 sub potential_start_times {
 	my $entries = shift @_;
 
@@ -310,6 +341,10 @@ sub page_find_meeting_time {
 		    </li>);
 	}
 	print "</ul>";
+
+	if(!@meeting_times) {
+		print "<p>Brak wolnych terminow.</p>";
+	}
 }
 
 sub unauthorized {
