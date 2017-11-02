@@ -17,6 +17,8 @@ my $dbh = DBI->connect("dbi:SQLite:dbname=$DATABASE_FILENAME", undef, undef, {
 
 my $q = CGI->new;
 
+my %user;
+
 # 0. Basic auth
 # 1. Display user's calendar
 # 2. Add entry
@@ -31,31 +33,6 @@ my %entry_type_descriptions = (
   'meeting' => "Spotkanie"
 );
 
-sub unauthorized {
-	print $q->header(
-		-status => "401 Unauthorized",
-		"WWW-Authenticate" => "Basic realm=\"kalendarz\""
-	);
-	exit;
-}
-
-my %user;
-
-my $authorization = $ENV{HTTP_AUTHORIZATION};
-if(!$authorization) {
-	unauthorized();
-} else {
-	$authorization =~ s/Basic //;
-	my ($login, $password) = split(':', decode_base64($authorization));
-	my $st = $dbh->prepare("SELECT * FROM users WHERE login = ? AND password = ?");
-	$st->execute($login, $password);
-	if(my $row = $st->fetchrow_hashref) {
-		%user = %$row;
-	} else {
-		unauthorized();
-	}
-}
-
 # userdate - string, "YYYY-MM-DD hh:mm"
 # timestamp - seconds since Unix epoch
 
@@ -64,11 +41,15 @@ if(!$authorization) {
 sub userdate_to_timestamp {
 	my $date = shift @_;
 	if($date =~ /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/) {
-		return mktime(0, $4, $3, $2, $1, $0);
+		return mktime(0, $5, $4, $3, $2 - 1, $1 - 1900);
 	} else {
 		return undef;
 	}
 }
+
+use Test::More;
+is(userdate_to_timestamp("2017-11-02 21:49"),1509655740);
+done_testing();
 
 sub timestamp_to_userdate {
 	my $time = shift @_;
@@ -119,7 +100,11 @@ sub page_view_calendar {
 	}
 	print "<hr/>";
 
-	print q(<a href="?page=add_entry">Dodaj nowy wpis</a>);
+	print q(<p><a href="?page=add_entry">Dodaj nowy wpis</a></p>);
+
+	if(is_boss) {
+		print q(<p><a href="?page=find_meeting_time">Znajdź termin spotkania</a></p>);
+	}
 }
 
 sub parse_add_entry_request {
@@ -226,7 +211,127 @@ sub page_delete_entry {
 		} else {
 			print $q->header(-status => "403 Forbidden");
 			print "Can't delete this entry.";
+			exit;
 		}
+	}
+}
+
+sub get_user_logins {
+	my $st = $dbh->prepare("SELECT login FROM users");
+	$st->execute();
+	my $results = $st->fetchall_arrayref({});
+	my @array = map { $_->{login} } @$results;
+	return \@array;
+}
+
+sub potential_start_times {
+	my $entries = shift @_;
+
+	my @result = map {
+		userdate_to_timestamp(
+			($_->{entry_type} eq 'work') ?
+				$_->{date_from} :
+				$_->{date_to})
+	} @$entries;
+	return \@result;
+}
+
+sub is_at_work {
+	my ($login, $entries, $when) = @_;
+	return scalar grep {
+		$_->{user_login} eq $login &&
+		userdate_to_timestamp($_->{date_from}) <= $when->{date_from} &&
+		userdate_to_timestamp($_->{date_to}) >= $when->{date_to}
+	} @$entries;
+}
+
+# A meeting time is valid if:
+# - all users are at work during the time
+# - no user has vacation, is busy during the time
+# - there's no meeting during the time
+sub is_valid_meeting_time {
+	my ($users, $entries, $when) = @_;
+	my $any_user_not_at_work = grep { !is_at_work($_, $entries, $when) } @$users;
+	if($any_user_not_at_work) {
+		return 0;
+	}
+
+	my $any_absence = grep {
+		$_->{entry_type} ne 'work' &&
+		userdate_to_timestamp($_->{date_from}) <= $when->{date_from} &&
+		userdate_to_timestamp($_->{date_to}) >= $when->{date_to}
+	} @$entries;
+
+	return !$any_absence;
+}
+
+sub page_find_meeting_time {
+	unless(is_boss) {
+		print $q->header(-status => "403 Forbidden");
+		print "This page is only for the boss.";
+		exit;
+	}
+
+	print $q->header("text/html; charset=utf-8");
+
+	print $q->h1("Znajdź czas na spotkanie grupy roboczej");
+
+	print $q->start_form(-method => "GET");
+	print $q->hidden('page', 'find_meeting_time');
+	print $q->p, $q->label('Czas trwania (godziny): '), $q->textfield('num_hours', 2);
+	print $q->p, $q->submit(-value => "Szukaj");
+	print $q->end_form();
+
+	my $num_hours = $q->param('num_hours') || 2;
+
+	my $duration_in_seconds = $num_hours * 3600;
+
+	my $users = get_user_logins;
+	
+	my $st = $dbh->prepare("SELECT * FROM calendar_entries WHERE date_to > date('now') ORDER BY date_from ASC");
+	$st->execute();
+	my $entries = $st->fetchall_arrayref({});
+	my $potential_start_times = potential_start_times($entries);
+	unshift @$potential_start_times, time;
+
+	my @meeting_times =
+		grep { is_valid_meeting_time($users, $entries, $_) }
+		map { my %h = ( "date_from" => $_, "date_to" => $_ + $duration_in_seconds ); \%h }
+		@$potential_start_times;
+
+	print "<ul>";
+	foreach(@meeting_times) {
+		my $date_from = timestamp_to_userdate($_->{date_from});
+		my $date_to = timestamp_to_userdate($_->{date_to});
+		print qq(
+			<li>$date_from &ndash; $date_to 
+		        <a href="?page=add_entry&entry_type=meeting&date_from=$date_from&date_to=$date_to">
+				  Dodaj spotkanie</a>
+		    </li>);
+	}
+	print "</ul>";
+}
+
+sub unauthorized {
+	print $q->header(
+		-status => "401 Unauthorized",
+		"WWW-Authenticate" => "Basic realm=\"kalendarz\""
+	);
+	exit;
+}
+
+my $authorization = $ENV{HTTP_AUTHORIZATION};
+if(!$authorization) {
+	unauthorized();
+} else {
+	$authorization =~ s/Basic //;
+	my ($login, $password) = split(':', decode_base64($authorization));
+	my $st = $dbh->prepare("SELECT * FROM users WHERE login = ? AND password = ?");
+	$st->execute($login, $password);
+	if(my $row = $st->fetchrow_hashref) {
+		%user = %$row;
+	} else {
+		unauthorized();
 	}
 }
 
@@ -236,6 +341,7 @@ my %pages = (
 	"view" => sub { page_view_calendar(); },
 	"add_entry" => sub { page_add_entry(); },
 	"delete_entry" => sub { page_delete_entry(); },
+	"find_meeting_time" => sub { page_find_meeting_time(); },
 );
 
 $pages{$page}();

@@ -10,7 +10,7 @@ CREATE TABLE calendar_entries (
   user_login text,
     -- nullable, NULL means for everyone, only boss can edit
   entry_type text not null,
-    -- 'work', 'absence', 'vacation', 'meeting'
+    -- 'work', 'busy', 'vacation', 'meeting'
   date_from datetime not null,
   date_to datetime not null
 );
