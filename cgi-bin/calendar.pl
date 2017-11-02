@@ -26,7 +26,7 @@ my $q = CGI->new;
 
 my %entry_type_descriptions = (
   'work' => "Godziny pracy",
-  'absence' => "Nieobecność",
+  'busy' => "Zajętość",
   'vacation' => "Urlop",
   'meeting' => "Spotkanie"
 );
@@ -75,25 +75,49 @@ sub timestamp_to_userdate {
 	return strftime("%F %R", localtime($time));
 }
 
+# true if current user is a boss
+sub is_boss {
+	return $user{user_type} eq 'boss';
+}
+
+# can_delete_entry(entry : hashref) - whether the current user can delete an entry
+# 
+# The rules are as follows:
+# - boss can delete everything
+# - everyone can delete their own entries
+sub can_delete_entry {
+	my $entry = shift @_;
+	return is_boss || $entry->{user_login} eq $user{login};
+}
+
 sub page_view_calendar {
 	print $q->header("text/html; charset=utf-8");
 
 	print $q->h1("Kalendarz - $user{full_name}");
 
-	my $st = $dbh->prepare("SELECT * FROM calendar_entries WHERE user_login = ?");
+	my $st = $dbh->prepare(q(
+		SELECT * FROM calendar_entries
+		WHERE user_login = ? OR user_login IS NULL
+		ORDER BY date_from ASC
+		));
 	$st->execute($user{login});
 
 	while(my $row = $st->fetchrow_hashref) {
-		print "<div>";
+		print "<div><hr/>";
 		print $q->p($row->{date_from} . " &ndash; " . $row->{date_to});
 		print $q->p($entry_type_descriptions{$row->{entry_type}});
-		print $q->start_form(-method => "POST", -action => "?page=delete_entry");
-		print q(<input type="hidden" name="page" value="delete_entry">);
-		print $q->hidden('entry_id', $row->{entry_id});
-		print $q->submit(-value => "Usuń");
-		print $q->end_form();
+
+		if(can_delete_entry($row)) {
+			print $q->start_form(-method => "POST", -action => "?page=delete_entry");
+			print q(<input type="hidden" name="page" value="delete_entry">);
+			print $q->hidden('entry_id', $row->{entry_id});
+			print $q->submit(-value => "Usuń");
+			print $q->end_form();
+		}
+
 		print "</div>";
 	}
+	print "<hr/>";
 
 	print q(<a href="?page=add_entry">Dodaj nowy wpis</a>);
 }
@@ -149,7 +173,10 @@ sub page_add_entry {
 	if($ENV{REQUEST_METHOD} eq "POST") {
 		my %record = parse_add_entry_request(\@errors);
 		if(!@errors) {
-			$record{user_login} = $user{login};
+			if($record{entry_type} ne 'meeting') {
+				# meetings are for everyone
+				$record{user_login} = $user{login};
+			}
 			save_entry(\%record, \@errors);
 			if(!@errors) {
 				print $q->redirect("?page=view");
@@ -164,8 +191,14 @@ sub page_add_entry {
 
 	print $q->start_form(-method => "POST");
 	print $q->hidden('page', 'add_entry');
+
+	my $types =
+		is_boss ?
+		['work', 'busy', 'vacation', 'meeting'] :
+		['work', 'busy', 'vacation'];
+
     print $q->p, $q->label('Typ: '),
-		$q->popup_menu('entry_type', ['work', 'absence', 'vacation', 'meeting'],
+		$q->popup_menu('entry_type', $types,
           'work', \%entry_type_descriptions);
 	my $start_time = int(time / 3600) * 3600 + 3600;
 	print $q->p, $q->label('Data początkowa: '),
@@ -183,12 +216,15 @@ sub page_add_entry {
 
 sub page_delete_entry {
 	my $entry_id = $q->param('entry_id');
-	my $st = $dbh->prepare("DELETE FROM calendar_entries WHERE entry_id = ? AND (? = 'boss' OR user_login = ?)");
-	$st->execute($entry_id, $user{user_type}, $user{login});
-	print $q->redirect("?page=view");
+	my $st = $dbh->prepare("SELECT * FROM calendar_entries WHERE entry_id = ?");
+	$st->execute($entry_id);
+	if(my $entry = $st->fetchrow_hashref) {
+		
+		print $q->redirect("?page=view");
+	}
 }
 
-my $page = $q->param("page");
+my $page = $q->param("page") || "view";
 
 my %pages = (
 	"view" => sub { page_view_calendar(); },
