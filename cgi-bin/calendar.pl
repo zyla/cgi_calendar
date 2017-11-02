@@ -1,10 +1,12 @@
 #!/usr/bin/env perl
 
 use strict;
+use utf8;
 use DBI;
 use CGI;
 use CGI::Carp qw(fatalsToBrowser);
 use MIME::Base64;
+use POSIX qw(strftime);
 
 my $DATABASE_FILENAME = "db.sqlite3";
 
@@ -78,11 +80,24 @@ sub page_view_calendar {
 
 sub page_add_entry {
 	print $q->h1("Nowy wpis - $user{full_name}");
+
+	print $q->start_form(-method => "POST");
+	print $q->hidden('page', 'add_entry');
+    print $q->p, $q->label('Typ: '),
+		$q->popup_menu('entry_type', ['work', 'absence', 'vacation', 'meeting'],
+          'work', \%entry_type_descriptions);
+	my $start_time = int(time / 3600) * 3600 + 3600;
+	print $q->p, $q->label('Data początkowa: '),
+		$q->textfield('date_from', strftime("%F %R", localtime($start_time)));
+	print $q->p, $q->label('Data końcowa: '),
+		$q->textfield('date_to', strftime("%F %R", localtime($start_time + 7200)));
+	print $q->p, $q->submit(-value => "Dodaj");
+	print $q->end_form();
 }
 
 my $page = $q->param("page");
 
-print $q->header();
+print $q->header("text/html; charset=utf-8");
 
 my %pages = (
 	"view" => sub { page_view_calendar(); },
