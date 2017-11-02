@@ -219,8 +219,14 @@ sub page_delete_entry {
 	my $st = $dbh->prepare("SELECT * FROM calendar_entries WHERE entry_id = ?");
 	$st->execute($entry_id);
 	if(my $entry = $st->fetchrow_hashref) {
-		
-		print $q->redirect("?page=view");
+		if(can_delete_entry($entry)) {
+			$st = $dbh->prepare("DELETE FROM calendar_entries WHERE entry_id = ?");
+			$st->execute($entry_id);
+			print $q->redirect("?page=view");
+		} else {
+			print $q->header(-status => "403 Forbidden");
+			print "Can't delete this entry.";
+		}
 	}
 }
 
